@@ -11,7 +11,9 @@ import model.train_set as train_set
 import numpy as np
 import matplotlib.pyplot as plt
 import datetime
+import os
 tf.reset_default_graph()
+os.environ["KMP_DUPLICATE_LIB_OK"]="TRUE"
 
 para=parameter(argparse.ArgumentParser())
 hp=para.get_para()
@@ -66,9 +68,11 @@ class Model(object):
     def __init__(self):
         self.x = tf.placeholder(tf.float32, [None, hp.input_features], name="input_x")
         self.y = tf.placeholder(tf.float32, [None, 1], name="input_y")
-        self.concate=tf.placeholder(tf.float32,[None,len(hp.city_list),hp.layer_dict[-1]])
+        self.x_=tf.placeholder(tf.float32,[len(hp.city_list),None,hp.input_features])
+
         self.x_lstm = tf.placeholder(tf.float32, [None, hp.layer_dict[-1]], name="input_x")
         self.keep_prob = tf.placeholder("float")
+        self.auto_list = [None for _ in range(len(hp.city_list))]
         self.auto_e=[None for _ in range(len(hp.city_list))]
         self.pre_train_op=[None for _ in range(len(hp.city_list))]
         self.pre_loss=[None for _ in range(len(hp.city_list))]
@@ -79,7 +83,10 @@ class Model(object):
 
         self.auto_list = [None for _ in range(len(hp.city_list))]
         self.model()
-        self.saver = tf.train.Saver()
+        self.saver = tf.train.Saver(max_to_keep=1)
+
+    def anti_encoder(self, city, input, layer_dict):
+        return
 
     def model(self):
         '''
@@ -87,7 +94,10 @@ class Model(object):
         '''
 
         #encoder for each city
-        encoder_list=self.concate
+        for city_i in range(len(hp.city_list)):
+            self.auto_list[city_i], _, _ = self.pre_train(city=hp.city_list[city_i],input=self.x_[city_i],layer_dict=hp.layer_dict)
+
+        encoder_list=self.auto_list
 
         # gauss
         gauss = Gauss()
@@ -96,7 +106,7 @@ class Model(object):
         self.gauss_result=gauss.add_result(encoder_list,weights)
 
         # lstm
-        mid_result = tf.reshape(self.x_lstm, shape=(hp.batch_size, hp.input_length, hp.layer_dict[-1]), name='shape')
+        mid_result = tf.reshape(self.gauss_result, shape=(hp.batch_size, hp.input_length, hp.layer_dict[-1]), name='shape')
         lstm = LSTM(input=mid_result, batch_size=hp.batch_size, layer_num=hp.hidden_layer, nodes=hp.hidden_size)
         self.pre=lstm.prediction(hp.output_length)
 
@@ -112,50 +122,87 @@ class Model(object):
         :return: [encoder ouput, train_op]
         '''
 
-        with tf.variable_scope(name_or_scope=city,reuse=tf.AUTO_REUSE):
+        with tf.variable_scope(name_or_scope=city, reuse=tf.AUTO_REUSE):
             auto_object = Auto_encoder(x=input, layer_dict=layer_dict)
             loss_ = auto_object.loss()
             pre_train_op = tf.train.AdamOptimizer(hp.pre_learning_rate).minimize(loss=loss_)
         return auto_object.e, pre_train_op, loss_
 
     def test(self):
+        test_data = test_set.getstart(file_path=hp.file_test)
+        test_data = np.array(test_data)
+        test_data = np.array(test_data[:, 2:], dtype=np.float32)
+        # evaluate the whole model
+        with tf.Session() as sess:
+            # self.saver.restore(sess,save_path='weights/pollutant.ckpt-0')
+            model_file = tf.train.latest_checkpoint('weights/')
+            self.saver.restore(sess, model_file)
+            predict, observed, test_y, target_index = list(), list(), list(), 0  # 0 represent the beginning of the target city :shanghai
+            while (target_index + len(hp.city_list) * (hp.input_length + hp.output_length + 1) <= test_data.shape[0]):
+                # to obtain the encoder result for each city
+                test_x_ = []
+                for city_i in range(len(hp.city_list)):
+                    test_x = []
+                    for i in range(city_i + target_index, test_data.shape[0], len(hp.city_list)):
+                        test_x.append(test_data[i])
+                        if city_i == 0 and len(test_x) % hp.input_length == 0 and i + len(hp.city_list) * (
+                                hp.output_length + 1) <= test_data.shape[0]:  # shanghai
+                            y = [test_data[k, 1] for k in
+                                 range(i + len(hp.city_list), i + len(hp.city_list) * (hp.output_length + 1),
+                                       len(hp.city_list))]
+                            test_y.append(y)
+                        if len(test_x) == hp.batch_size * hp.input_length:
+                            break
+                    test_x_.append(test_x)
+                if len(test_y) != hp.batch_size: break
+                # to obtain the whole prediction model results
+                pre = sess.run(self.pre, feed_dict={self.x_: test_x_, self.y: np.reshape(np.array(test_y), newshape=[-1,
+                                                                                                                     hp.output_length])})
+                predict.append(pre)
+                observed.append(test_y)
+                test_y = list()
+                target_index += hp.pre_step * len(hp.city_list) * hp.batch_size
+        predict = np.reshape(np.array(predict, dtype=float), newshape=[-1])
+        observed = np.reshape(np.array(observed, dtype=float), newshape=[-1])
+        # print(predict.shape,observed.shape)
+        re_index(observed, predict)
+        figure_show(observed,predict,100)
         return
 
     def evaluate(self):
         test_data= test_set.getstart(file_path=hp.file_test)
-        print(len(test_data))
+        test_data=np.array(test_data)
+        test_data=np.array(test_data[:,2:],dtype=np.float32)
         # evaluate the whole model
         with tf.Session() as sess:
-            self.saver.restore(sess,save_path='weights/pollutant.ckpt-0')
+            # self.saver.restore(sess,save_path='weights/pollutant.ckpt-0')
+            model_file = tf.train.latest_checkpoint('weights/')
+            self.saver.restore(sess, model_file)
             predict, observed, test_y, target_index = list(), list(), list(), 0  # 0 represent the beginning of the target city :shanghai
-            while (target_index + len(hp.city_list) * (hp.input_length + hp.output_length + 1) <= len(test_data)):
-                print(target_index)
+            while (target_index + len(hp.city_list) * (hp.input_length + hp.output_length + 1) <= test_data.shape[0]):
                 # to obtain the encoder result for each city
+                test_x_=[]
                 for city_i in range(len(hp.city_list)):
                     test_x = []
-                    for i in range(city_i + target_index, len(test_data), len(hp.city_list)):
-                        test_x.append(test_data[i][2:])
-                        if city_i == 0 and len(test_x) % hp.input_length == 0:  # shanghai
-                            test_y.append(test_data[target_index + len(hp.city_list) * (hp.input_length + hp.output_length + 1)][3])
+                    for i in range(city_i + target_index, test_data.shape[0], len(hp.city_list)):
+                        test_x.append(test_data[i])
+                        if city_i == 0 and len(test_x) % hp.input_length == 0 and i + len(hp.city_list)* (hp.output_length+1)<=test_data.shape[0]:  # shanghai
+                            y = [test_data[k, 1] for k in range(i + len(hp.city_list), i + len(hp.city_list) * (hp.output_length + 1),len(hp.city_list))]
+                            test_y.append(y)
                         if len(test_x) == hp.batch_size * hp.input_length:
-                            self.auto_list[city_i] = sess.run(self.auto_e[city_i],
-                                                              feed_dict={self.x: np.array(test_x)})
                             break
+                    test_x_.append(test_x)
                 if len(test_y) != hp.batch_size: break
-                # dtype convert
-                auto_list = tf.transpose(tf.convert_to_tensor(np.array(self.auto_list)), [1, 0, 2])
-                # to obtain the gauss weighted results
-                gauss_r = sess.run(self.gauss_result, feed_dict={self.concate: sess.run(auto_list)})
                 # to obtain the whole prediction model results
-                pre = sess.run(self.pre, feed_dict={self.x_lstm: gauss_r,
-                                                     self.y: np.reshape(np.array(test_y),newshape=[-1,hp.output_length])})
+                pre = sess.run(self.pre, feed_dict={self.x_:test_x_,self.y: np.reshape(np.array(test_y),newshape=[-1,hp.output_length])})
                 predict.append(pre)
                 observed.append(test_y)
                 test_y=list()
-                target_index += hp.pre_step
-        predict=np.array(predict)
-        observed=np.array(observed)
-        print(predict.shape,observed.shape)
+                target_index += hp.pre_step*len(hp.city_list)*hp.batch_size
+        predict=np.reshape(np.array(predict,dtype=float),newshape=[-1])
+        observed=np.reshape(np.array(observed,dtype=float),newshape=[-1])
+        # print(predict.shape,observed.shape)
+        re_index(observed,predict)
 
     def train(self):
         '''
@@ -163,6 +210,8 @@ class Model(object):
         :return:
         '''
         train_data= train_set.getstart(file_path=hp.file_train)
+        train_data=np.array(train_data)
+        train_data=np.array(train_data[:,2:],dtype=np.float32)
 
         with tf.Session() as sess:
             sess.run(tf.global_variables_initializer())
@@ -185,34 +234,32 @@ class Model(object):
             min_loss=1000000
             for epoch in range(hp.epoch):
                 loss_,train_y, target_index = list(),list(), 0 # 0 represent the beginning of the target city :shanghai
-                while(target_index+len(hp.city_list)*(hp.input_length+hp.output_length+1)<=len(train_data)):
-                    print(target_index)
+                while(target_index+len(hp.city_list)*(hp.input_length+hp.output_length+1)<=train_data.shape[0]):
                     # to obtain the encoder result for each city
+                    train_x_=[]
                     for city_i in range(len(hp.city_list)):
                         train_x = []
-                        for i in range(city_i+target_index, len(train_data), len(hp.city_list)):
-                            train_x.append(train_data[i][2:])
-                            if city_i==0 and len(train_x)%hp.input_length==0: #shanghai
-                                train_y.append(train_data[target_index + len(hp.city_list) * (hp.input_length + hp.output_length + 1)][3])
+                        for i in range(city_i+target_index, train_data.shape[0], len(hp.city_list)):
+                            train_x.append(train_data[i])
+                            if city_i==0 and len(train_x)%hp.input_length==0 and i + len(hp.city_list)* (hp.output_length+1)<=train_data.shape[0]: #shanghai
+                                y=[train_data[k,1] for k in range(i+len(hp.city_list), i + len(hp.city_list)* (hp.output_length+1),len(hp.city_list))]
+                                train_y.append(y)
                             if len(train_x) == hp.batch_size * hp.input_length:
-                                self.auto_list[city_i]=sess.run(self.auto_e[city_i],feed_dict={self.x: np.array(train_x)})
                                 break
+                        train_x_.append(train_x)
                     if len(train_y)!=hp.batch_size:break
-                    # dtype convert
-                    auto_list=tf.transpose(tf.convert_to_tensor(np.array(self.auto_list)),[1,0,2])
-                    # to obtain the gauss weighted results
-                    gauss_r=sess.run(self.gauss_result,feed_dict={self.concate:sess.run(auto_list)})
                     # to obtain the whole prediction model results
-                    l,_=sess.run((self.cross_entropy,self.train_op),feed_dict={self.x_lstm:gauss_r,
+                    l,_=sess.run((self.cross_entropy,self.train_op),feed_dict={self.x_:np.array(train_x_),
                                                                                self.y:np.reshape(np.array(train_y),newshape=[-1,hp.output_length])})
                     loss_.append(l)
+                    print("in the current %d index, the training loss is : %f." % (target_index, l))
                     train_y=list()
-                    target_index+=hp.step
+                    target_index+=hp.step * len(hp.city_list)*hp.batch_size
+                print("after %d epoch,the minimum whole pollutant concentration prediction loss is : %f." % (epoch, min_loss))
                 if min_loss>sum(loss_) / len(loss_):
                     min_loss=sum(loss_) / len(loss_)
                     self.saver.save(sess, save_path='weights/pollutant.ckpt', global_step=epoch)
                     self.evaluate()
-                print("after %d epoch,the minimum whole pollutant concentration prediction loss is : %f." % (epoch, min_loss))
 
             end_time = datetime.datetime.now()
             total_time = end_time - start_time
@@ -221,5 +268,5 @@ class Model(object):
 if __name__ == '__main__':
     model=Model()
     # model.train()
-    # model.test()
-    model.evaluate()
+    model.test()
+    # model.evaluate()

@@ -5,6 +5,7 @@ Created on Thu Mar 15 09:55:13 2018
 @author: Administrator
 """
 import numpy as np
+import tensorflow as tf
 import math
 class Gauss(object):
     def __init__(self,u=0.0, e=1):
@@ -30,7 +31,9 @@ class Gauss(object):
         return A*B
 
     def add_result(self,encoder_list,weights):
-        sum_=sum([encoder_list[:,i,:]*weights[0] for i in range(len(weights))])
+        # sum_=sum([encoder_list[i]*weights[0] for i in range(len(weights))])
+        encoder_list=[tf.multiply(encoder_list[i],weights[i]) for i in range(len(weights))]
+        sum_=tf.reduce_sum(tf.convert_to_tensor(encoder_list),axis=0)
         return sum_
 
 if __name__=='__main__':

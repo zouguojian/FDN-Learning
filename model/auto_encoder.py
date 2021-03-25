@@ -31,7 +31,6 @@ class Auto_encoder(object):
                     self.layer_encoder[i]=tf.layers.dense(inputs=self.layer_encoder[i-1],
                                                    units=self.layer_dict[i],
                                                    activation=tf.nn.relu)
-
         #     print('the encoder %d layer, and the layer output tensor shape is %s.'%(i+1,str(self.layer_encoder[i].shape)))
         # print('\n')
         return self.layer_encoder[-1]
@@ -42,7 +41,7 @@ class Auto_encoder(object):
         '''
 
         for i in range (len(self.layer_dict)-1,-1,-1):
-            with tf.variable_scope(name_or_scope='decoder_layer'+str(i),reuse=tf.AUTO_REUSE):
+            with tf.variable_scope(name_or_scope='decoder_layer'+str(i)):
                 if i==len(self.layer_dict)-1:
                     self.layer_decoder[i] = tf.layers.dense(inputs=self.layer_encoder[-1],
                                                      units=self.layer_dict[i-1],
