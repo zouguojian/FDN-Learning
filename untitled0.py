@@ -9,7 +9,7 @@ from sklearn.model_selection import train_test_split
 import pandas as pd
 import numpy as np
 
-url='/Users/guojianzou/Documents/博士相关论文/土地增值/data/归一化2.xlsx'
+url='/Users/guojianzou/Documents/博士相关论文/Housing prices/data/归一化2.xlsx'
 reader=pd.read_excel(io=url)
 keys=reader.keys()
 # print(list(reader.keys()))
